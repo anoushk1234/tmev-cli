@@ -1,60 +1,47 @@
 #![feature(async_closure)]
 use std::error::Error;
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
+// use std::sync::Arc;
+// use std::thread;
+// use std::time::Duration;
 
 use crate::arb_feed::ArbFeedResponse;
 use arb_feed::QueryData;
 use clap::arg;
-use clap::command;
-use clap::ArgMatches;
+// use clap::command;
+// use clap::ArgMatches;
 use clap::Command;
-use clap::Parser;
+// use clap::Parser;
 use spinners::{Spinner, Spinners};
-// use crossterm::{
-//     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
-//     execute,
-//     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-// };
-// use std::{io, thread, time::Duration};
-// use tui::{
-//     backend::CrosstermBackend,
-//     layout::{Constraint, Direction, Layout, Margin},
-//     style::{Color, Modifier, Style},
-//     text::{Span, Spans},
-//     widgets::{Block, Borders, Cell, Row, Table, Widget},
-//     Terminal,
-// };
-
-/// Simple program to greet a person
-// #[derive(Parser, Debug, Clone)]
-// #[command(author, version, about, long_about = None)]
-// struct Args {
-//     #[arg(short, long)]
-//     address: String,
-// }
 mod arb_feed;
 mod arb_table;
+mod bundle_sub;
+// mod searcher_grpc;
 
 use arb_table::*;
+use futures::stream::iter;
+use tmev_protos::SubscribeBundlesRequest;
+// use tmev_protos::bundle_service_client;
+// use tmev_protos::SubscribeBundlesRequest;
+use tmev_protos::bundle_service_client::BundleServiceClient;
 use tokio::sync::Mutex;
-use tokio::time::sleep;
-
+use tokio::time::delay_for;
 #[tokio::main]
 async fn main() {
     let cmd = Command::new("tmev").args(&[
         arg!(--address <ADDRESS> "An address to filter transactions by"),
-        arg!([arbs] "View a table of the recent arbs in order of most profitable"),
+        arg!(--arbs "View a table of the recent arbs in order of most profitable"),
+        arg!(--bundles "View a table of the recent bundles"),
     ]);
 
     let matches = cmd.get_matches();
-
+    println!("matches: {:?}", matches);
     for arg in matches.ids().into_iter() {
+        println!("matches: {:?}", arg);
         let a = arg.as_str();
         match a {
             "address" => {
                 println!("{}", a);
+                break;
             }
             "arbs" => {
                 // println!("{}", a);
@@ -66,41 +53,12 @@ async fn main() {
                 )
                 .unwrap()
                 .query_data;
-                // let block_times = parsed
-                //     .block_time
-                //     .iter()
-                //     .map(|f| f.as_str())
-                //     .collect::<Vec<&str>>();
-                // let slot_ids = parsed
-                //     .slot_id
-                //     .iter()
-                //     .map(|f| f.as_str())
-                //     .collect::<Vec<&str>>();
-                // let transaction_hashes = parsed
-                //     .transaction_hash
-                //     .iter()
-                //     .map(|f| f.as_str())
-                //     .collect::<Vec<&str>>();
 
                 let profit_amts = parsed
                     .profit_amount
                     .iter()
                     .map(|a| a.to_string())
                     .collect::<Vec<String>>();
-                // let profit_amts = profit_amts_string
-                //     .iter()
-                //     .map(|f| f.as_str())
-                //     .collect::<Vec<&str>>();
-                // let currencies = parsed
-                //     .currency
-                //     .iter()
-                //     .map(|c| c.as_str())
-                //     .collect::<Vec<&str>>();
-                // let signers = parsed
-                //     .signers
-                //     .iter()
-                //     .map(|f| f.as_str())
-                //     .collect::<Vec<&str>>();
                 let prices_usd = parsed
                     .price_usd
                     .iter()
@@ -140,10 +98,42 @@ async fn main() {
                 sp.stop();
 
                 display_table(row_vec).await.unwrap();
+                break;
+            }
+            "bundles" => {
+                loop {
+                    let channel = tonic::transport::Channel::from_static("http://0.0.0.0:5005")
+                        .connect()
+                        .await
+                        .unwrap();
+
+                    let mut client: BundleServiceClient<tonic::transport::Channel> =
+                        BundleServiceClient::new(channel);
+                    let request = tonic::Request::new(SubscribeBundlesRequest {
+                        searcher_key: String::from(""),
+                    });
+                    // now the response is stream
+                    let mut response = client
+                        .subscribe_bundles(request)
+                        .await
+                        .ok()
+                        .expect("failed to subscribe to bundles")
+                        .into_inner();
+                    // listening to stream
+                    while let res = response.message().await {
+                        match res {
+                            Ok(r) => println!("RESPONSE={:?}", r),
+                            Err(e) => println!("ERR={:?}", e),
+                        }
+                    }
+                }
+
+                // break;
             }
 
             _ => {
                 // overview ui
+                break;
             }
         }
     }

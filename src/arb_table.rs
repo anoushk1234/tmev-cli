@@ -15,8 +15,8 @@ use std::{
 };
 use std::{marker::Send, vec};
 use tokio::sync::Mutex;
-use tokio::time::sleep;
-use tokio_util::task::LocalPoolHandle;
+use tokio::time::delay_for;
+// use tokio_util::task::LocalPoolHandle;
 use tui::{
     backend::{Backend, CrosstermBackend},
     layout::{Constraint, Layout, Rect},
@@ -159,17 +159,17 @@ async fn run_app<'a, B: Backend + std::marker::Send>(
     mut app: App<'a>,
 ) -> io::Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<Vec<String>>>(9000);
-    let local_set = LocalPoolHandle::new(1);
+    // let local_set = LocalPoolHandle::new(1);
     // let tx2 = tx.clone();
     // println!("enter");
-    local_set.spawn_pinned(async move || loop {
-        // panic!("fuck");
-        sleep(Duration::from_millis(5000)).await;
-        // let mut sp = Spinner::new(Spinners::Dots8Bit, " updating".into());
-        let resp = get_and_parse_arb_feed().await.unwrap();
-        tx.send(resp).await.unwrap();
-        // sp.stop();
-    });
+    // local_set.spawn_pinned(async move || loop {
+    //     // panic!("fuck");
+    //     sleep(Duration::from_millis(5000)).await;
+    //     // let mut sp = Spinner::new(Spinners::Dots8Bit, " updating".into());
+    //     let resp = get_and_parse_arb_feed().await.unwrap();
+    //     tx.send(resp).await.unwrap();
+    //     // sp.stop();
+    // });
     // let mut newitems: Vec<Vec<String>> = Vec::new();
     // newitems = app.items.clone();
     Ok(loop {
@@ -185,7 +185,7 @@ async fn run_app<'a, B: Backend + std::marker::Send>(
                 KeyCode::Left => app.on_left(),
                 KeyCode::Char('r') => {
                     terminal.clear();
-                    sleep(Duration::from_millis(500));
+                    delay_for(Duration::from_millis(500));
                     continue;
                 }
                 KeyCode::Enter => app.go_to_explorer(),
