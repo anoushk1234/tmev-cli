@@ -10,6 +10,7 @@ use clap::arg;
 // use clap::command;
 // use clap::ArgMatches;
 use clap::Command;
+use futures::StreamExt;
 // use clap::Parser;
 use spinners::{Spinner, Spinners};
 mod arb_feed;
@@ -19,12 +20,12 @@ mod bundle_sub;
 
 use arb_table::*;
 use futures::stream::iter;
-use tmev_protos::SubscribeBundlesRequest;
+use tmev_protos::tmev_proto::SubscribeBundlesRequest;
 // use tmev_protos::bundle_service_client;
 // use tmev_protos::SubscribeBundlesRequest;
-use tmev_protos::bundle_service_client::BundleServiceClient;
+use tmev_protos::tmev_proto::bundle_service_client::BundleServiceClient;
 use tokio::sync::Mutex;
-use tokio::time::delay_for;
+use tokio::time::sleep;
 #[tokio::main]
 async fn main() {
     let cmd = Command::new("tmev").args(&[
@@ -101,34 +102,28 @@ async fn main() {
                 break;
             }
             "bundles" => {
-                loop {
-                    let channel = tonic::transport::Channel::from_static("http://0.0.0.0:5005")
-                        .connect()
-                        .await
-                        .unwrap();
+                // loop {
+                // let channel = tonic::transport::Channel::from_static("http://0.0.0.0:6005")
+                //     .connect()
+                //     .await
+                //     .unwrap();
 
-                    let mut client: BundleServiceClient<tonic::transport::Channel> =
-                        BundleServiceClient::new(channel);
-                    let request = tonic::Request::new(SubscribeBundlesRequest {
-                        searcher_key: String::from(""),
-                    });
-                    // now the response is stream
-                    let mut response = client
-                        .subscribe_bundles(request)
-                        .await
-                        .ok()
-                        .expect("failed to subscribe to bundles")
-                        .into_inner();
-                    // listening to stream
-                    while let res = response.message().await {
-                        match res {
-                            Ok(r) => println!("RESPONSE={:?}", r),
-                            Err(e) => println!("ERR={:?}", e),
-                        }
-                    }
+                let mut client = BundleServiceClient::connect("http://0.0.0.0:5005")
+                    .await
+                    .unwrap();
+                let mut stream = client
+                    .subscribe_bundles(SubscribeBundlesRequest {
+                        searcher_key: "test".to_string(),
+                    })
+                    .await
+                    .unwrap()
+                    .into_inner();
+
+                // stream is infinite - take just 5 elements and then disconnect
+                // let mut stream = stream.t(num);
+                while let Some(item) = stream.next().await {
+                    println!("\treceived: {:?}", item.unwrap().bundle);
                 }
-
-                // break;
             }
 
             _ => {

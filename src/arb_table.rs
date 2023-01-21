@@ -15,7 +15,7 @@ use std::{
 };
 use std::{marker::Send, vec};
 use tokio::sync::Mutex;
-use tokio::time::delay_for;
+use tokio::time::sleep;
 // use tokio_util::task::LocalPoolHandle;
 use tui::{
     backend::{Backend, CrosstermBackend},
@@ -185,7 +185,7 @@ async fn run_app<'a, B: Backend + std::marker::Send>(
                 KeyCode::Left => app.on_left(),
                 KeyCode::Char('r') => {
                     terminal.clear();
-                    delay_for(Duration::from_millis(500));
+                    sleep(Duration::from_millis(500));
                     continue;
                 }
                 KeyCode::Enter => app.go_to_explorer(),
