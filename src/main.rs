@@ -120,10 +120,12 @@ async fn main() {
                         .expect("failed to subscribe to bundles")
                         .into_inner();
                     // listening to stream
-                    while let res = response.message().await {
-                        match res {
-                            Ok(r) => println!("RESPONSE={:?}", r),
-                            Err(e) => println!("ERR={:?}", e),
+                    match response.message().await {
+                        Ok(msg) => {
+                            println!("msg: {:?}", msg);
+                        }
+                        Err(e) => {
+                            println!("err: {:?} {:?}", e, response.message().await);
                         }
                     }
                 }
