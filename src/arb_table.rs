@@ -1,20 +1,33 @@
-use crate::{arb_feed::*, get_and_parse_arb_feed};
+use crate::key::Key;
+use crate::{
+    arb_feed::*,
+    bundle_feed::run_bundle_request_loop,
+    events::{Events, InputEvent},
+    get_and_parse_arb_feed,
+};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use spinners::{Spinner, Spinners};
-use std::sync::Arc;
+use std::{
+    borrow::{Borrow, BorrowMut},
+    sync::Arc,
+};
 use std::{
     error::Error,
     io::{self, Stdout},
     os::unix::thread,
     // thread::sleep,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use std::{marker::Send, vec};
-use tokio::sync::Mutex;
+use tmev_protos::tmev_proto::Bundle;
+use tokio::sync::{
+    mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
+    Mutex,
+};
 use tokio::time::sleep;
 // use tokio_util::task::LocalPoolHandle;
 use tui::{
@@ -30,7 +43,8 @@ pub struct App<'a> {
     state: TableState,
     title: &'a str,
     tabs: TabsState<'a>,
-    items: Vec<Vec<String>>,
+    arbs: Vec<Vec<String>>,
+    bundle: FullBundleTable<'a>,
 }
 // unsafe impl Send for App {}
 // unsafe impl Sync for App {}
@@ -39,14 +53,19 @@ impl<'a> App<'a> {
         App {
             title,
             state: TableState::default(),
-            items: rows,
+            arbs: rows,
+            bundle: FullBundleTable {
+                title: "Bundles Processed",
+                state: TableState::default(),
+                sent_bundles: Vec::default(),
+            },
             tabs: TabsState::new(vec!["arbs", "bundles"]),
         }
     }
     pub fn next(&mut self) {
         let i = match self.state.selected() {
             Some(i) => {
-                if i >= self.items.len() - 1 {
+                if i >= self.arbs.len() - 1 {
                     0
                 } else {
                     i + 1
@@ -61,7 +80,7 @@ impl<'a> App<'a> {
         let i = match self.state.selected() {
             Some(i) => {
                 if i == 0 {
-                    self.items.len() - 1
+                    self.arbs.len() - 1
                 } else {
                     i - 1
                 }
@@ -72,7 +91,7 @@ impl<'a> App<'a> {
     }
     pub fn go_to_explorer(&mut self) {
         let row_index = self.state.selected().unwrap();
-        let row = self.items.get(row_index).unwrap();
+        let row = self.arbs.get(row_index).unwrap();
         let mut explorer = "https://explorer.solana.com/tx/".to_string().to_owned();
         explorer.push_str(row.get(2).unwrap());
 
@@ -85,6 +104,9 @@ impl<'a> App<'a> {
     pub fn on_left(&mut self) {
         self.tabs.previous();
     }
+    // pub fn on_tick(&mut self){
+
+    // }
 }
 pub struct TabsState<'a> {
     pub titles: Vec<&'a str>,
@@ -106,6 +128,52 @@ impl<'a> TabsState<'a> {
         // else {
         //     self.index = self.titles.len() - 1;
         // }
+    }
+}
+
+// Sep table struct for all bundles in the bundle tab
+pub struct FullBundleTable<'a> {
+    title: &'a str,
+    state: TableState,
+    sent_bundles: Vec<Bundle>,
+}
+impl<'a> FullBundleTable<'a> {
+    pub fn new(sent_bundles: Vec<Bundle>) -> FullBundleTable<'a> {
+        FullBundleTable {
+            title: "Bundles Processed",
+            state: TableState::default(),
+            sent_bundles,
+        }
+    }
+    pub fn next(&mut self) {
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i >= self.sent_bundles.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+
+    pub fn previous(&mut self) {
+        let i = match self.state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.sent_bundles.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.state.select(Some(i));
+    }
+    pub fn on_tick(&mut self, new_bundle: Bundle) {
+        self.sent_bundles.push(new_bundle)
     }
 }
 
@@ -172,23 +240,27 @@ async fn run_app<'a, B: Backend + std::marker::Send>(
     // });
     // let mut newitems: Vec<Vec<String>> = Vec::new();
     // newitems = app.items.clone();
+    let tick = Instant::now();
+    let events = Events::new(Duration::from_millis(200));
     Ok(loop {
+        let app = app.borrow_mut();
         // app.items = newitems.clone();
-        terminal.draw(|f| draw(f, &mut app))?;
+        terminal.draw(|f| draw(f, app))?;
 
-        if let Event::Key(key) = event::read()? {
-            match key.code {
-                KeyCode::Char('q') => break,
-                KeyCode::Down => app.next(),
-                KeyCode::Up => app.previous(),
-                KeyCode::Right => app.on_right(),
-                KeyCode::Left => app.on_left(),
-                KeyCode::Char('r') => {
-                    terminal.clear();
+        if let InputEvent::Input(i) = events.next().unwrap() {
+            match i {
+                Key::Char('q') => break,
+
+                Key::Down => app.next(),
+                Key::Up => app.previous(),
+                Key::Right => app.on_right(),
+                Key::Left => app.on_left(),
+                Key::Char('r') => {
+                    terminal.clear().unwrap();
                     sleep(Duration::from_millis(500));
                     continue;
                 }
-                KeyCode::Enter => app.go_to_explorer(),
+                Key::Enter => app.go_to_explorer(),
                 _ => {
                     if let Some(mut msg) = rx.recv().await {
                         if msg.len() > 0 {
@@ -209,7 +281,17 @@ async fn run_app<'a, B: Backend + std::marker::Send>(
                 }
             }
         }
-        // Possibly add updating here?
+
+        let (tx2, mut rx2) = unbounded_channel();
+        tokio::spawn(run_bundle_request_loop(tx2));
+        // tokio::spawn(async move {
+        //     if let Some(new_bundles) = rx2.recv().await {
+        //         for new_bundle in new_bundles {
+        //             app.bundle.on_tick(new_bundle);
+        //         }
+        //     }
+        // }); part that gives error because we are moving app into a diff thread closure
+        // and we need to do this because running recv on main thread would block input and ui render
     })
 }
 
@@ -274,7 +356,7 @@ where
         )
         .split(area);
 
-    ui(f, app, chunks[0]);
+    draw_full_bundles_table(f, app, area)
     // draw_text(f, chunks[1]);
 }
 //draws our table
@@ -303,7 +385,7 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
         .style(normal_style)
         .height(1)
         .bottom_margin(1);
-    let rows = app.items.iter().map(|item| {
+    let rows = app.arbs.iter().map(|item| {
         let height = item
             .iter()
             .map(|content| content.chars().filter(|c| *c == '\n').count())
@@ -327,6 +409,67 @@ fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
             Constraint::Min(10),
             Constraint::Percentage(10),
             Constraint::Length(20),
+            // Constraint::Min(10),
+        ])
+        .column_spacing(1);
+    f.render_stateful_widget(t, area, &mut app.state);
+}
+
+fn draw_full_bundles_table<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
+    let chunks = Layout::default()
+        .constraints(
+            [
+                Constraint::Length(2),
+                Constraint::Length(3),
+                Constraint::Length(1),
+            ]
+            .as_ref(),
+        )
+        .margin(1)
+        .split(area);
+    // let block = Block::default().borders(Borders::ALL).title("Graphs");
+    // f.render_widget(block, area);
+
+    let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+    let normal_style = Style::default().bg(Color::LightGreen);
+    let header_cells = ["uuid", "searcher_key", "txn_hash"]
+        .iter()
+        .map(|h| Cell::from(*h).style(Style::default().fg(Color::Black)));
+    let header = Row::new(header_cells)
+        .style(normal_style)
+        .height(1)
+        .bottom_margin(1);
+    let rows = app.bundle.sent_bundles.iter().map(|item| {
+        let item = vec![
+            item.uuid.clone(),
+            item.searcher_key.clone(),
+            item.transaction_hash.clone(),
+        ];
+        let height = item
+            .iter()
+            .map(|content| content.chars().filter(|c| *c == '\n').count())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let cells = item.iter().map(|c| Cell::from(c.clone()));
+        Row::new(cells).height(height as u16).bottom_margin(1)
+    });
+    let t = Table::new(rows)
+        .header(header)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Latest Bundles"),
+        )
+        .highlight_style(selected_style)
+        .highlight_symbol(">> ")
+        .widths(&[
+            Constraint::Percentage(20),
+            Constraint::Length(10),
+            Constraint::Min(10),
             // Constraint::Min(10),
         ])
         .column_spacing(1);

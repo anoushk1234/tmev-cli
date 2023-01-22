@@ -1,10 +1,12 @@
 #![feature(async_closure)]
 use std::error::Error;
+use std::time::Duration;
 // use std::sync::Arc;
 // use std::thread;
 // use std::time::Duration;
 
 use crate::arb_feed::ArbFeedResponse;
+use crate::bundle_feed::run_bundle_request_loop;
 use arb_feed::QueryData;
 use clap::arg;
 // use clap::command;
@@ -15,7 +17,12 @@ use futures::StreamExt;
 use spinners::{Spinner, Spinners};
 mod arb_feed;
 mod arb_table;
-mod bundle_sub;
+mod bundle_feed;
+mod events;
+mod key;
+
+use key::Key;
+// mod bundle_table;
 // mod searcher_grpc;
 
 use arb_table::*;
@@ -99,31 +106,16 @@ async fn main() {
                 sp.stop();
 
                 display_table(row_vec).await.unwrap();
-                break;
             }
             "bundles" => {
                 // loop {
-                // let channel = tonic::transport::Channel::from_static("http://0.0.0.0:6005")
-                //     .connect()
-                //     .await
-                //     .unwrap();
 
-                let mut client = BundleServiceClient::connect("http://0.0.0.0:5005")
-                    .await
-                    .unwrap();
-                let mut stream = client
-                    .subscribe_bundles(SubscribeBundlesRequest {
-                        searcher_key: "test".to_string(),
-                    })
-                    .await
-                    .unwrap()
-                    .into_inner();
+                // let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                // tokio::spawn(run_bundle_request_loop(tx));
 
-                // stream is infinite - take just 5 elements and then disconnect
-                // let mut stream = stream.t(num);
-                while let Some(item) = stream.next().await {
-                    println!("\treceived: {:?}", item.unwrap().bundle);
-                }
+                // display_table(rows)
+
+                break;
             }
 
             _ => {
