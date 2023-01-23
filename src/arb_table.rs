@@ -45,11 +45,17 @@ pub struct App {
     tabs: TabsState,
     arbs: Vec<Vec<String>>,
     bundle: FullBundleTable,
+    analytics: AnalyticsTable,
 }
 // unsafe impl Send for App {}
 // unsafe impl Sync for App {}
 impl App {
-    pub fn new(title: String, rows: Vec<Vec<String>>, bundle_vec: Vec<Vec<String>>) -> App {
+    pub fn new(
+        title: String,
+        rows: Vec<Vec<String>>,
+        bundle_vec: Vec<Vec<String>>,
+        analytics: Vec<Vec<String>>,
+    ) -> App {
         App {
             title,
             state: TableState::default(),
@@ -59,7 +65,16 @@ impl App {
                 state: TableState::default(),
                 sent_bundles: bundle_vec,
             },
-            tabs: TabsState::new(vec!["arbs".to_string(), "bundles".to_string()]),
+            tabs: TabsState::new(vec![
+                "Arbs".to_string(),
+                "Bundles".to_string(),
+                "Your Bundles".to_string(),
+            ]),
+            analytics: AnalyticsTable {
+                title: "Your Bundles".to_string(),
+                state: TableState::default(),
+                items: analytics,
+            },
         }
     }
     pub fn next(&mut self) {
@@ -92,6 +107,19 @@ impl App {
                 // println!("");
                 self.bundle.state.select(Some(i));
             }
+            2 => {
+                let i = match self.analytics.state.selected() {
+                    Some(i) => {
+                        if i >= self.analytics.items.len() - 1 {
+                            0
+                        } else {
+                            i + 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.analytics.state.select(Some(i));
+            }
             _ => {}
         }
     }
@@ -113,6 +141,19 @@ impl App {
             }
 
             1 => {
+                let i = match self.bundle.state.selected() {
+                    Some(i) => {
+                        if i == 0 {
+                            self.bundle.sent_bundles.len() - 1
+                        } else {
+                            i - 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.bundle.state.select(Some(i));
+            }
+            2 => {
                 let i = match self.bundle.state.selected() {
                     Some(i) => {
                         if i == 0 {
@@ -218,10 +259,54 @@ impl FullBundleTable {
         self.sent_bundles.push(new_bundle)
     }
 }
+
+pub struct AnalyticsTable {
+    title: String,
+    state: TableState,
+    items: Vec<Vec<String>>,
+}
+
+impl AnalyticsTable {
+    pub fn new(items: Vec<Vec<String>>) -> AnalyticsTable {
+        AnalyticsTable {
+            title: "Bundles Processed".to_string(),
+            state: TableState::default(),
+            items,
+        }
+    }
+    // pub fn next(&mut self) {
+    //     let i = match self.state.selected() {
+    //         Some(i) => {
+    //             if i >= self.items.len() - 1 {
+    //                 0
+    //             } else {
+    //                 i + 1
+    //             }
+    //         }
+    //         None => 0,
+    //     };
+    //     self.state.select(Some(i));
+    // }
+
+    // pub fn previous(&mut self) {
+    //     let i = match self.state.selected() {
+    //         Some(i) => {
+    //             if i == 0 {
+    //                 self.items.len() - 1
+    //             } else {
+    //                 i - 1
+    //             }
+    //         }
+    //         None => 0,
+    //     };
+    //     self.state.select(Some(i));
+    // }
+}
 //this is our "start_ui" from the monkey blog
 pub async fn display_table(
     rows: Vec<Vec<String>>,
     bundle_vec: Vec<Vec<String>>,
+    analytics: Vec<Vec<String>>,
 ) -> Result<Terminal<CrosstermBackend<Stdout>>, Box<dyn Error>> {
     // setup terminal
     enable_raw_mode()?;
@@ -231,7 +316,12 @@ pub async fn display_table(
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let mut app = App::new("JITO SEARCHER TERMINAL 🤑".to_string(), rows, bundle_vec);
+    let mut app = App::new(
+        "JITO SEARCHER TERMINAL 🤑".to_string(),
+        rows,
+        bundle_vec,
+        analytics,
+    );
     // let app = Arc::clone(&app);
     let res = run_app(&mut terminal, &mut app).await;
     //let events = Events::new(Duration::from_millis(200));
@@ -351,6 +441,7 @@ pub fn draw<B: Backend>(f: &mut Frame<B>, app: &mut App) {
     match app.tabs.index {
         0 => draw_first_tab(f, app, chunks[1]),
         1 => draw_second_tab(f, app, chunks[1]),
+        2 => draw_third_tab(f, app, chunks[1]),
         _ => {}
     };
 }
@@ -390,6 +481,23 @@ where
 
     draw_full_bundles_table(f, app, area)
     // draw_text(f, chunks[1]);
+}
+fn draw_third_tab<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
+    let chunks = Layout::default()
+        .constraints(
+            [
+                Constraint::Length(20),
+                Constraint::Length(3),
+                Constraint::Length(2),
+            ]
+            .as_ref(),
+        )
+        .split(area);
+
+    draw_analytics_table(f, app, area)
 }
 //draws our table
 fn ui<B: Backend>(f: &mut Frame<B>, app: &mut App, area: Rect) {
@@ -467,7 +575,7 @@ where
 
     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
     let normal_style = Style::default().bg(Color::LightGreen);
-    let header_cells = ["slot", "searcher_key", "uuid"]
+    let header_cells = ["slot", "searcher_key", "uuid", "tip_amt"]
         .iter()
         .map(|h| Cell::from(*h).style(Style::default().fg(Color::Black)));
     let header = Row::new(header_cells)
@@ -500,8 +608,61 @@ where
         .highlight_symbol(">> ")
         .widths(&[
             Constraint::Percentage(20),
-            Constraint::Percentage(40),
-            Constraint::Percentage(40),
+            Constraint::Percentage(30),
+            Constraint::Percentage(30),
+            Constraint::Percentage(10),
+            // Constraint::Percentage(10),
+        ])
+        .column_spacing(1);
+    f.render_stateful_widget(t, area, &mut app.bundle.state);
+}
+
+fn draw_analytics_table<B>(f: &mut Frame<B>, app: &mut App, area: Rect)
+where
+    B: Backend,
+{
+    let chunks = Layout::default()
+        .constraints(
+            [
+                Constraint::Percentage(20),
+                Constraint::Percentage(35),
+                Constraint::Percentage(35),
+                Constraint::Percentage(5),
+            ]
+            .as_ref(),
+        )
+        .margin(1)
+        .split(area);
+    let selected_style = Style::default().add_modifier(Modifier::REVERSED);
+    let normal_style = Style::default().bg(Color::LightGreen);
+    let header_cells = ["slot", "searcher_key", "uuid", "tip_amt"]
+        .iter()
+        .map(|h| Cell::from(*h).style(Style::default().fg(Color::Black)));
+    let header = Row::new(header_cells)
+        .style(normal_style)
+        .height(1)
+        .bottom_margin(1);
+
+    let rows = app.analytics.items.iter().map(|item| {
+        let height = item
+            .iter()
+            .map(|content| content.chars().filter(|c| *c == '\n').count())
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let cells = item.iter().map(|c| Cell::from(c.clone()));
+        Row::new(cells).height(height as u16).bottom_margin(1)
+    });
+    let t = Table::new(rows)
+        .header(header)
+        .block(Block::default().borders(Borders::ALL).title("Your Bundles"))
+        .highlight_style(selected_style)
+        .highlight_symbol(">> ")
+        .widths(&[
+            Constraint::Percentage(20),
+            Constraint::Percentage(35),
+            Constraint::Percentage(35),
+            Constraint::Percentage(5),
             // Constraint::Percentage(10),
         ])
         .column_spacing(1);

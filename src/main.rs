@@ -37,15 +37,15 @@ use tokio::time::sleep;
 #[tokio::main]
 async fn main() {
     let cmd = Command::new("tmev").args(&[
-        arg!(--address <ADDRESS> "An address to filter transactions by"),
-        arg!(--arbs "View a table of the recent arbs in order of most profitable"),
+        arg!(--address <ADDRESS> "Deprecated."),
+        arg!(--arbs <ADDRESS>"View a table of the recent arbs in order of most profitable"),
         arg!(--bundles "View a table of the recent bundles"),
     ]);
 
     let matches = cmd.get_matches();
-    println!("matches: {:?}", matches);
+    // println!("matches: {:?}", matches);
     for arg in matches.ids().into_iter() {
-        println!("matches: {:?}", arg);
+        // println!("matches: {:?}", arg);
         let a = arg.as_str();
         match a {
             "address" => {
@@ -105,18 +105,36 @@ async fn main() {
                 }
                 let raw_bundles = get_bundle_feed().await.unwrap();
                 let mut bundle_vec = Vec::new();
-                for (i, raw) in raw_bundles.iter().enumerate() {
+                let mut searcher_bundle_vec = Vec::new();
+                let sk = "CQzPyC5xVhkuBfWFJiPCvPEnBshmRium4xxUxnX1ober"; // adding this to filter searcher only for demo purposes
+                for raw in raw_bundles.iter() {
                     let searcher = raw.bundles.get(0).unwrap().searcher_key.clone();
                     let uuid = raw.bundles.get(0).unwrap().uuid.clone();
+                    let slot = raw.bundles.get(0).unwrap().slot.clone();
+                    let mut tip = raw.tip_amt.clone().unwrap_or(0.0).to_string();
+                    // println!("out: {:?}", tip);
+                    tip.push_str(" 💰");
                     bundle_vec.push(vec![
-                        (i + 100000000).to_string(),
+                        slot.clone(),
                         searcher.clone(),
                         uuid.clone(),
+                        tip.clone(),
                     ]);
+                    if searcher == sk.to_string() {
+                        searcher_bundle_vec.push(vec![
+                            slot.clone(),
+                            searcher.clone(),
+                            uuid.clone(),
+                            tip.clone(),
+                        ]);
+                    }
                 }
+
                 sp.stop();
-                //http://0.0.0.0:8080/bundles/
-                display_table(row_vec, bundle_vec).await.unwrap();
+
+                display_table(row_vec, bundle_vec, searcher_bundle_vec)
+                    .await
+                    .unwrap();
             }
             "bundles" => {
                 // loop {
