@@ -108,14 +108,13 @@ async fn main() {
                 display_table(row_vec).await.unwrap();
             }
             "bundles" => {
-                // loop {
+                loop {
+                    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                    tokio::spawn(run_bundle_request_loop(tx));
 
-                // let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-                // tokio::spawn(run_bundle_request_loop(tx));
-
-                // display_table(rows)
-
-                break;
+                    //display_table(rows)
+                }
+                // break;
             }
 
             _ => {

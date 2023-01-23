@@ -39,27 +39,27 @@ use tui::{
     Frame, Terminal,
 };
 
-pub struct App<'a> {
+pub struct App {
     state: TableState,
-    title: &'a str,
-    tabs: TabsState<'a>,
+    title: String,
+    tabs: TabsState,
     arbs: Vec<Vec<String>>,
-    bundle: FullBundleTable<'a>,
+    bundle: FullBundleTable,
 }
 // unsafe impl Send for App {}
 // unsafe impl Sync for App {}
-impl<'a> App<'a> {
-    pub fn new(title: &'a str, rows: Vec<Vec<String>>) -> App<'a> {
+impl App {
+    pub fn new(title: String, rows: Vec<Vec<String>>) -> App {
         App {
             title,
             state: TableState::default(),
             arbs: rows,
             bundle: FullBundleTable {
-                title: "Bundles Processed",
+                title: "Bundles Processed".to_string(),
                 state: TableState::default(),
                 sent_bundles: Vec::default(),
             },
-            tabs: TabsState::new(vec!["arbs", "bundles"]),
+            tabs: TabsState::new(vec!["arbs".to_string(), "bundles".to_string()]),
         }
     }
     pub fn next(&mut self) {
@@ -108,13 +108,13 @@ impl<'a> App<'a> {
 
     // }
 }
-pub struct TabsState<'a> {
-    pub titles: Vec<&'a str>,
+pub struct TabsState {
+    pub titles: Vec<String>,
     pub index: usize,
 }
 
-impl<'a> TabsState<'a> {
-    pub fn new(titles: Vec<&'a str>) -> TabsState {
+impl TabsState {
+    pub fn new(titles: Vec<String>) -> TabsState {
         TabsState { titles, index: 0 }
     }
     pub fn next(&mut self) {
@@ -132,15 +132,15 @@ impl<'a> TabsState<'a> {
 }
 
 // Sep table struct for all bundles in the bundle tab
-pub struct FullBundleTable<'a> {
-    title: &'a str,
+pub struct FullBundleTable {
+    title: String,
     state: TableState,
     sent_bundles: Vec<Bundle>,
 }
-impl<'a> FullBundleTable<'a> {
-    pub fn new(sent_bundles: Vec<Bundle>) -> FullBundleTable<'a> {
+impl FullBundleTable {
+    pub fn new(sent_bundles: Vec<Bundle>) -> FullBundleTable {
         FullBundleTable {
-            title: "Bundles Processed",
+            title: "Bundles Processed".to_string(),
             state: TableState::default(),
             sent_bundles,
         }
@@ -177,7 +177,7 @@ impl<'a> FullBundleTable<'a> {
     }
 }
 
-pub async fn display_table<'a>(
+pub async fn display_table(
     rows: Vec<Vec<String>>,
 ) -> Result<Terminal<CrosstermBackend<Stdout>>, Box<dyn Error>> {
     // setup terminal
@@ -188,7 +188,10 @@ pub async fn display_table<'a>(
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let app = App::new("JITO SEARCHER TERMINAL 🤑", rows);
+    let app = Arc::new(tokio::sync::Mutex::new(App::new(
+        "JITO SEARCHER TERMINAL 🤑".to_string(),
+        rows,
+    )));
     let res = run_app(&mut terminal, app).await;
 
     // restore terminal
@@ -222,9 +225,9 @@ where
 
     f.render_widget(paragraph, area);
 }
-async fn run_app<'a, B: Backend + std::marker::Send>(
+async fn run_app<B: Backend + std::marker::Send>(
     terminal: &mut Terminal<B>,
-    mut app: App<'a>,
+    mut app: &Arc<tokio::sync::Mutex<App>>,
 ) -> io::Result<()> {
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<Vec<String>>>(9000);
     // let local_set = LocalPoolHandle::new(1);
@@ -240,12 +243,11 @@ async fn run_app<'a, B: Backend + std::marker::Send>(
     // });
     // let mut newitems: Vec<Vec<String>> = Vec::new();
     // newitems = app.items.clone();
-    let tick = Instant::now();
     let events = Events::new(Duration::from_millis(200));
     Ok(loop {
-        let app = app.borrow_mut();
+        let mut app = app.lock().await;
         // app.items = newitems.clone();
-        terminal.draw(|f| draw(f, app))?;
+        terminal.draw(|f| draw(f, app.borrow_mut()))?;
 
         if let InputEvent::Input(i) = events.next().unwrap() {
             match i {
@@ -283,19 +285,23 @@ async fn run_app<'a, B: Backend + std::marker::Send>(
         }
 
         let (tx2, mut rx2) = unbounded_channel();
+        // update file or redis
+        // updates app on every render
+
         tokio::spawn(run_bundle_request_loop(tx2));
-        // tokio::spawn(async move {
-        //     if let Some(new_bundles) = rx2.recv().await {
-        //         for new_bundle in new_bundles {
-        //             app.bundle.on_tick(new_bundle);
-        //         }
-        //     }
-        // }); part that gives error because we are moving app into a diff thread closure
+        tokio::spawn(async move {
+            if let Some(new_bundles) = rx2.recv().await {
+                for new_bundle in new_bundles {
+                    app.bundle.on_tick(new_bundle);
+                }
+            }
+        });
+        //part that gives error because we are moving app into a diff thread closure
         // and we need to do this because running recv on main thread would block input and ui render
     })
 }
 
-pub fn draw<B: Backend>(f: &mut Frame<B>, app: &mut App) {
+pub fn draw<B: Backend>(f: &mut Frame<B>, app: &mut tokio::sync::MutexGuard<App>) {
     let chunks = Layout::default()
         .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
         .split(f.size());
@@ -303,10 +309,14 @@ pub fn draw<B: Backend>(f: &mut Frame<B>, app: &mut App) {
         .tabs
         .titles
         .iter()
-        .map(|t| Spans::from(Span::styled(*t, Style::default().fg(Color::Green))))
+        .map(|t| Spans::from(Span::styled(t, Style::default().fg(Color::Green))))
         .collect();
     let tabs = Tabs::new(titles)
-        .block(Block::default().borders(Borders::ALL).title(app.title))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(app.title.clone()),
+        )
         .highlight_style(Style::default().bg(Color::Blue).fg(Color::Green))
         .select(app.tabs.index);
     let block = Block::default().borders(Borders::ALL).title(Span::styled(
