@@ -1,7 +1,6 @@
 use crate::key::Key;
 use crate::{
     arb_feed::*,
-    bundle_feed::run_bundle_request_loop,
     events::{Events, InputEvent},
     get_and_parse_arb_feed,
 };
@@ -24,6 +23,7 @@ use std::{
 };
 use std::{marker::Send, vec};
 use tmev_protos::tmev_proto::Bundle;
+use tokio::sync::MutexGuard;
 use tokio::sync::{
     mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     Mutex,
@@ -49,7 +49,7 @@ pub struct App {
 // unsafe impl Send for App {}
 // unsafe impl Sync for App {}
 impl App {
-    pub fn new(title: String, rows: Vec<Vec<String>>) -> App {
+    pub fn new(title: String, rows: Vec<Vec<String>>, bundle_vec: Vec<Vec<String>>) -> App {
         App {
             title,
             state: TableState::default(),
@@ -57,39 +57,81 @@ impl App {
             bundle: FullBundleTable {
                 title: "Bundles Processed".to_string(),
                 state: TableState::default(),
-                sent_bundles: Vec::default(),
+                sent_bundles: bundle_vec,
             },
             tabs: TabsState::new(vec!["arbs".to_string(), "bundles".to_string()]),
         }
     }
     pub fn next(&mut self) {
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i >= self.arbs.len() - 1 {
-                    0
-                } else {
-                    i + 1
-                }
+        // println!("tab index {:?}", self.tabs.index);
+        match self.tabs.index {
+            0 => {
+                let i = match self.state.selected() {
+                    Some(i) => {
+                        if i >= self.arbs.len() - 1 {
+                            0
+                        } else {
+                            i + 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.state.select(Some(i));
             }
-            None => 0,
-        };
-        self.state.select(Some(i));
+            1 => {
+                let i = match self.bundle.state.selected() {
+                    Some(i) => {
+                        if i >= self.bundle.sent_bundles.len() - 1 {
+                            0
+                        } else {
+                            i + 1
+                        }
+                    }
+                    None => 0,
+                };
+                // println!("");
+                self.bundle.state.select(Some(i));
+            }
+            _ => {}
+        }
     }
 
     pub fn previous(&mut self) {
-        let i = match self.state.selected() {
-            Some(i) => {
-                if i == 0 {
-                    self.arbs.len() - 1
-                } else {
-                    i - 1
-                }
+        match self.tabs.index {
+            0 => {
+                let i = match self.state.selected() {
+                    Some(i) => {
+                        if i == 0 {
+                            self.arbs.len() - 1
+                        } else {
+                            i - 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.state.select(Some(i));
             }
-            None => 0,
-        };
-        self.state.select(Some(i));
+
+            1 => {
+                let i = match self.bundle.state.selected() {
+                    Some(i) => {
+                        if i == 0 {
+                            self.bundle.sent_bundles.len() - 1
+                        } else {
+                            i - 1
+                        }
+                    }
+                    None => 0,
+                };
+                self.bundle.state.select(Some(i));
+            }
+            _ => {}
+        }
     }
     pub fn go_to_explorer(&mut self) {
+        if self.tabs.index == 1 {
+            return;
+        }
         let row_index = self.state.selected().unwrap();
         let row = self.arbs.get(row_index).unwrap();
         let mut explorer = "https://explorer.solana.com/tx/".to_string().to_owned();
@@ -135,10 +177,10 @@ impl TabsState {
 pub struct FullBundleTable {
     title: String,
     state: TableState,
-    sent_bundles: Vec<Bundle>,
+    sent_bundles: Vec<Vec<String>>,
 }
 impl FullBundleTable {
-    pub fn new(sent_bundles: Vec<Bundle>) -> FullBundleTable {
+    pub fn new(sent_bundles: Vec<Vec<String>>) -> FullBundleTable {
         FullBundleTable {
             title: "Bundles Processed".to_string(),
             state: TableState::default(),
@@ -172,13 +214,14 @@ impl FullBundleTable {
         };
         self.state.select(Some(i));
     }
-    pub fn on_tick(&mut self, new_bundle: Bundle) {
+    pub fn on_tick(&mut self, new_bundle: Vec<String>) {
         self.sent_bundles.push(new_bundle)
     }
 }
-
+//this is our "start_ui" from the monkey blog
 pub async fn display_table(
     rows: Vec<Vec<String>>,
+    bundle_vec: Vec<Vec<String>>,
 ) -> Result<Terminal<CrosstermBackend<Stdout>>, Box<dyn Error>> {
     // setup terminal
     enable_raw_mode()?;
@@ -188,11 +231,10 @@ pub async fn display_table(
     let mut terminal = Terminal::new(backend)?;
 
     // create app and run it
-    let app = Arc::new(tokio::sync::Mutex::new(App::new(
-        "JITO SEARCHER TERMINAL 🤑".to_string(),
-        rows,
-    )));
-    let res = run_app(&mut terminal, app).await;
+    let mut app = App::new("JITO SEARCHER TERMINAL 🤑".to_string(), rows, bundle_vec);
+    // let app = Arc::clone(&app);
+    let res = run_app(&mut terminal, &mut app).await;
+    //let events = Events::new(Duration::from_millis(200));
 
     // restore terminal
     disable_raw_mode()?;
@@ -227,9 +269,9 @@ where
 }
 async fn run_app<B: Backend + std::marker::Send>(
     terminal: &mut Terminal<B>,
-    mut app: &Arc<tokio::sync::Mutex<App>>,
+    app: &mut App,
 ) -> io::Result<()> {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<Vec<String>>>(9000);
+    // let (tx, mut rx) = tokio::sync::mpsc::channel::<Vec<Vec<String>>>(9000);
     // let local_set = LocalPoolHandle::new(1);
     // let tx2 = tx.clone();
     // println!("enter");
@@ -244,15 +286,12 @@ async fn run_app<B: Backend + std::marker::Send>(
     // let mut newitems: Vec<Vec<String>> = Vec::new();
     // newitems = app.items.clone();
     let events = Events::new(Duration::from_millis(200));
-    Ok(loop {
-        let mut app = app.lock().await;
+    loop {
         // app.items = newitems.clone();
-        terminal.draw(|f| draw(f, app.borrow_mut()))?;
-
+        terminal.draw(|f| draw(f, app))?;
         if let InputEvent::Input(i) = events.next().unwrap() {
             match i {
                 Key::Char('q') => break,
-
                 Key::Down => app.next(),
                 Key::Up => app.previous(),
                 Key::Right => app.on_right(),
@@ -263,45 +302,28 @@ async fn run_app<B: Backend + std::marker::Send>(
                     continue;
                 }
                 Key::Enter => app.go_to_explorer(),
-                _ => {
-                    if let Some(mut msg) = rx.recv().await {
-                        if msg.len() > 0 {
-                            // terminal.clear();
-                            // msg.push(vec![
-                            //     "hello1".to_string(),
-                            //     "2".to_string(),
-                            //     "3".to_string(),
-                            //     "4".to_string(),
-                            // ]);
-                            // newitems = vec![vec![String::from("something")]];
-                            continue;
-                            // app.state.select(index)
-                            // println!("reaches here");
-                        }
-                    }
-                    // continue;
-                }
+                _ => {} // continue;
             }
         }
-
-        let (tx2, mut rx2) = unbounded_channel();
-        // update file or redis
-        // updates app on every render
-
-        tokio::spawn(run_bundle_request_loop(tx2));
-        tokio::spawn(async move {
-            if let Some(new_bundles) = rx2.recv().await {
-                for new_bundle in new_bundles {
-                    app.bundle.on_tick(new_bundle);
-                }
-            }
-        });
-        //part that gives error because we are moving app into a diff thread closure
-        // and we need to do this because running recv on main thread would block input and ui render
-    })
+    }
+    Ok(())
 }
+//let (tx2, mut rx2) = unbounded_channel();
+// update file or redis
+// updates app on every render
+// tokio::spawn(run_bundle_request_loop(tx2));
+// tokio::spawn(async move {
+//     if let Some(new_bundles) = rx2.recv().await {
+//         for new_bundle in new_bundles {
+//             app.bundle.on_tick(new_bundle);
+//         }
+//     }
+// });
+//part that gives error because we are moving app into a diff thread closure
+// and we need to do this because running recv on main thread would block input and ui render
 
-pub fn draw<B: Backend>(f: &mut Frame<B>, app: &mut tokio::sync::MutexGuard<App>) {
+pub fn draw<B: Backend>(f: &mut Frame<B>, app: &mut App) {
+    // let app = app.lock().await;
     let chunks = Layout::default()
         .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
         .split(f.size());
@@ -445,7 +467,7 @@ where
 
     let selected_style = Style::default().add_modifier(Modifier::REVERSED);
     let normal_style = Style::default().bg(Color::LightGreen);
-    let header_cells = ["uuid", "searcher_key", "txn_hash"]
+    let header_cells = ["slot", "searcher_key", "uuid"]
         .iter()
         .map(|h| Cell::from(*h).style(Style::default().fg(Color::Black)));
     let header = Row::new(header_cells)
@@ -453,11 +475,11 @@ where
         .height(1)
         .bottom_margin(1);
     let rows = app.bundle.sent_bundles.iter().map(|item| {
-        let item = vec![
-            item.uuid.clone(),
-            item.searcher_key.clone(),
-            item.transaction_hash.clone(),
-        ];
+        // let item = vec![
+        //     item.uuid.clone(),
+        //     item.searcher_key.clone(),
+        //     item.transaction_hash.clone(),
+        // ];
         let height = item
             .iter()
             .map(|content| content.chars().filter(|c| *c == '\n').count())
@@ -478,10 +500,10 @@ where
         .highlight_symbol(">> ")
         .widths(&[
             Constraint::Percentage(20),
-            Constraint::Length(10),
-            Constraint::Min(10),
-            // Constraint::Min(10),
+            Constraint::Percentage(40),
+            Constraint::Percentage(40),
+            // Constraint::Percentage(10),
         ])
         .column_spacing(1);
-    f.render_stateful_widget(t, area, &mut app.state);
+    f.render_stateful_widget(t, area, &mut app.bundle.state);
 }

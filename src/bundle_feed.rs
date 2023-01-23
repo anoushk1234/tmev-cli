@@ -1,15 +1,40 @@
-use futures::StreamExt;
-use reqwest::Response;
-use serde_derive::Deserialize;
-use serde_derive::Serialize;
-use serde_json::Value;
+use reqwest;
 use std::error::Error;
+
+pub async fn get_bundle_feed() -> Result<Vec<BlockBundles>, Box<dyn Error>> {
+    let url = "http://0.0.0.0:8080/bundles";
+    let client = reqwest::Client::new();
+    let resp = client.get(url).send().await?;
+    let parsed: Vec<BlockBundles> =
+        serde_json::from_str(resp.text().await.unwrap().as_str()).unwrap();
+    Ok(parsed)
+}
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BlockBundles {
+    pub id: Option<String>,
+    pub bundles: Vec<SingleBundle>,
+}
+// pardon the naming scheme too many "Bundles"
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SingleBundle {
+    pub searcher_key: String,
+    pub uuid: String,
+    pub transaction_hash: String,
+}
+use futures::StreamExt;
+// use reqwest::Response;
+// use serde_derive::Deserialize;
+// use serde_derive::Serialize;
+// use serde_json::Value;
+// use std::error::Error;
 use std::time::Duration;
 use tmev_protos::tmev_proto::bundle_service_client::BundleServiceClient;
 use tmev_protos::tmev_proto::Bundle;
 use tmev_protos::tmev_proto::SubscribeBundlesRequest;
-use tokio::sync::mpsc::Receiver;
-use tokio::sync::mpsc::Sender;
+// use tokio::sync::mpsc::Receiver;
+// use tokio::sync::mpsc::Sender;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::sleep;
 

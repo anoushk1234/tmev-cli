@@ -6,7 +6,7 @@ use std::time::Duration;
 // use std::time::Duration;
 
 use crate::arb_feed::ArbFeedResponse;
-use crate::bundle_feed::run_bundle_request_loop;
+use crate::bundle_feed::get_bundle_feed;
 use arb_feed::QueryData;
 use clap::arg;
 // use clap::command;
@@ -20,8 +20,8 @@ mod arb_table;
 mod bundle_feed;
 mod events;
 mod key;
-
 use key::Key;
+use reqwest::Response;
 // mod bundle_table;
 // mod searcher_grpc;
 
@@ -31,6 +31,7 @@ use tmev_protos::tmev_proto::SubscribeBundlesRequest;
 // use tmev_protos::bundle_service_client;
 // use tmev_protos::SubscribeBundlesRequest;
 use tmev_protos::tmev_proto::bundle_service_client::BundleServiceClient;
+use tmev_protos::tmev_proto::Bundle;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 #[tokio::main]
@@ -102,19 +103,32 @@ async fn main() {
                     ];
                     row_vec.push(row);
                 }
-
+                let raw_bundles = get_bundle_feed().await.unwrap();
+                let mut bundle_vec = Vec::new();
+                for (i, raw) in raw_bundles.iter().enumerate() {
+                    let searcher = raw.bundles.get(0).unwrap().searcher_key.clone();
+                    let uuid = raw.bundles.get(0).unwrap().uuid.clone();
+                    bundle_vec.push(vec![
+                        (i + 100000000).to_string(),
+                        searcher.clone(),
+                        uuid.clone(),
+                    ]);
+                }
                 sp.stop();
-
-                display_table(row_vec).await.unwrap();
+                //http://0.0.0.0:8080/bundles/
+                display_table(row_vec, bundle_vec).await.unwrap();
             }
             "bundles" => {
-                loop {
-                    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-                    tokio::spawn(run_bundle_request_loop(tx));
+                // loop {
+                //     // let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+                //     // tokio::spawn(run_bundle_request_loop(tx));
 
-                    //display_table(rows)
-                }
+                //     //display_table(rows)
+                // }
                 // break;
+                // let feed = get_bundle_feed().await;
+
+                // display_table();
             }
 
             _ => {
