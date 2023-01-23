@@ -3,7 +3,7 @@ use reqwest::header::CONTENT_TYPE;
 use std::error::Error;
 const TIP_ACCOUNT: &'static str = "Gnt27xtC473ZT2Mw5u8wZ68Z3gULkSTb5DuxJy7eJotD";
 pub async fn get_bundle_feed() -> Result<Vec<BlockBundles>, Box<dyn Error>> {
-    let url = "http://0.0.0.0:8080/bundles";
+    let url = "http://0.0.0.0:8000/bundles";
     let client = reqwest::Client::new();
     let resp = client.get(url).send().await?;
     let parsed: Vec<BlockBundles> =

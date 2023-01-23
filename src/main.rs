@@ -137,16 +137,22 @@ async fn main() {
                     .unwrap();
             }
             "bundles" => {
-                // loop {
-                //     // let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-                //     // tokio::spawn(run_bundle_request_loop(tx));
+                // bundle stream demo
+                let mut client = BundleServiceClient::connect("http://0.0.0.0:5006")
+                    .await
+                    .unwrap();
+                let mut stream = client
+                    .subscribe_bundles(SubscribeBundlesRequest {
+                        searcher_key: "test".to_string(),
+                    })
+                    .await
+                    .unwrap()
+                    .into_inner();
 
-                //     //display_table(rows)
-                // }
-                // break;
-                // let feed = get_bundle_feed().await;
-
-                // display_table();
+                let mut stream = stream.take(5);
+                while let Some(item) = stream.next().await {
+                    println!("\treceived: {:?}", item.unwrap().bundles);
+                }
             }
 
             _ => {
